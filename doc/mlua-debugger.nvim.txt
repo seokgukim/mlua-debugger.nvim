@@ -1,0 +1,139 @@
+*mlua-debugger.nvim.txt*  Standalone debugger for mLua/MSW
+
+==============================================================================
+CONTENTS                                           *mlua-debugger-contents*
+
+    1. Introduction ........................ |mlua-debugger-introduction|
+    2. Requirements ........................ |mlua-debugger-requirements|
+    3. Configuration ....................... |mlua-debugger-configuration|
+    4. Commands ............................ |mlua-debugger-commands|
+    5. Keymaps ............................. |mlua-debugger-keymaps|
+    6. API ................................. |mlua-debugger-api|
+
+==============================================================================
+1. INTRODUCTION                                 *mlua-debugger-introduction*
+
+mlua-debugger.nvim is a standalone debugger for mLua/MSW in Neovim.
+It communicates directly with the MSW debug server using its binary protocol
+(not DAP JSON-RPC), so no nvim-dap is required.
+
+==============================================================================
+2. REQUIREMENTS                                 *mlua-debugger-requirements*
+
+- Neovim 0.9+
+
+==============================================================================
+3. CONFIGURATION                               *mlua-debugger-configuration*
+
+Call the setup function with optional configuration:
+>lua
+    require("mlua-debugger").setup({
+      port = 51300,       -- Default port to connect to
+      host = "localhost", -- Host to connect to
+      timeout = 300000,    -- Connection timeout in ms
+    })
+<
+
+==============================================================================
+4. COMMANDS                                       *mlua-debugger-commands*
+
+:MluaDebugAttach [port]                              *:MluaDebugAttach*
+    Attach to the MSW debugger. Optional port argument.
+
+:MluaDebugDisconnect                                 *:MluaDebugDisconnect*
+    Disconnect from the debugger.
+
+:MluaDebugContinue                                   *:MluaDebugContinue*
+    Continue execution.
+
+:MluaDebugStepOver                                   *:MluaDebugStepOver*
+    Step over current line.
+
+:MluaDebugStepInto                                   *:MluaDebugStepInto*
+    Step into function call.
+
+:MluaDebugStepOut                                    *:MluaDebugStepOut*
+    Step out of current function.
+
+:MluaDebugToggleBreakpoint                     *:MluaDebugToggleBreakpoint*
+    Toggle breakpoint at cursor position.
+
+:MluaDebugClearBreakpoints                     *:MluaDebugClearBreakpoints*
+    Clear all breakpoints.
+
+:MluaDebugStackTrace                                 *:MluaDebugStackTrace*
+    Show current stack trace.
+
+:MluaDebugEval {expression}                          *:MluaDebugEval*
+    Evaluate an expression.
+
+==============================================================================
+5. KEYMAPS                                         *mlua-debugger-keymaps*
+
+The following keymaps are automatically set for mlua filetype buffers:
+
+    <F5>        Continue
+    <F9>        Toggle breakpoint
+    <F10>       Step over
+    <F11>       Step into
+    <S-F11>     Step out
+    <leader>dc  Continue
+    <leader>db  Toggle breakpoint
+    <leader>dB  Clear breakpoints
+    <leader>ds  Step over
+    <leader>di  Step into
+    <leader>do  Step out
+    <leader>dt  Stack trace
+    <leader>da  Attach
+    <leader>dd  Disconnect
+
+==============================================================================
+6. API                                                 *mlua-debugger-api*
+
+mlua-debugger.setup({opts})                       *mlua-debugger.setup()*
+    Set up the debugger with optional configuration.
+
+mlua-debugger.connect({host}, {port}, {callback}) *mlua-debugger.connect()*
+    Connect to the debug server.
+
+mlua-debugger.disconnect()                       *mlua-debugger.disconnect()*
+    Disconnect from the debug server.
+
+mlua-debugger.isConnected()                     *mlua-debugger.isConnected()*
+    Returns true if connected to debug server.
+
+mlua-debugger.continue()                           *mlua-debugger.continue()*
+    Continue execution.
+
+mlua-debugger.stepOver()                           *mlua-debugger.stepOver()*
+    Step over current line.
+
+mlua-debugger.stepInto()                           *mlua-debugger.stepInto()*
+    Step into function call.
+
+mlua-debugger.stepOut()                             *mlua-debugger.stepOut()*
+    Step out of current function.
+
+mlua-debugger.toggleBreakpoint()           *mlua-debugger.toggleBreakpoint()*
+    Toggle breakpoint at cursor position.
+
+mlua-debugger.clearBreakpoints()           *mlua-debugger.clearBreakpoints()*
+    Clear all breakpoints.
+
+mlua-debugger.getBreakpoints({filePath})   *mlua-debugger.getBreakpoints()*
+    Get breakpoints for a file.
+
+mlua-debugger.getStackTrace()                 *mlua-debugger.getStackTrace()*
+    Get current stack trace.
+
+mlua-debugger.getScopes({frameId}, {callback})   *mlua-debugger.getScopes()*
+    Get scopes for a stack frame.
+
+mlua-debugger.getVariables({ref}, {callback}) *mlua-debugger.getVariables()*
+    Get variables for a reference.
+
+mlua-debugger.evaluate({expr}, {frameId}, {ctx}, {cb}) *mlua-debugger.evaluate()*
+    Evaluate an expression.
+
+==============================================================================
+vim:tw=78:ts=8:ft=help:norl:

@@ -1,0 +1,30 @@
+# Byte-compiled / cache
+*.luac
+
+# Neovim swap / backup / undo
+.*.swp
+.*.swo
+swap/
+backup/
+undo/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Runtime files
+*.pid
+*.sock
+
+# Secrets and local config
+.env
+.env.local
+
+# LuaRocks
+luarocks/
+
+# Lua language server
+.lua-language-server
