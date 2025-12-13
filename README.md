@@ -2,6 +2,9 @@
 
 Standalone debugger for mLua/MSW in Neovim using MSW's binary protocol.
 
+<img width="1899" height="1072" alt="mlua-debugger.nvim" src="https://github.com/user-attachments/assets/a8d282c6-b548-4302-bbad-2d10a53b7e0a" />
+
+
 ## Features
 
 - Direct communication with MSW debugger (binary protocol, not DAP JSON-RPC)
