@@ -350,6 +350,7 @@ function M.getStackTrace(startFrame, maxLevels)
 	return {
 		stackFrames = frames,
 		totalFrames = #allFrames,
+		execSpace = session.currentStack.execSpace,
 	}
 end
 

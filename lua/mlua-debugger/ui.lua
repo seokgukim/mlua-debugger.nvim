@@ -33,6 +33,10 @@ local state = {
 		extmark_id = nil,
 	},
 	console_lines = {},
+	-- Variables state
+	scopes = nil,
+	expanded_references = {}, -- Set of variablesReference -> boolean
+	variables_map = {}, -- Map of line number -> variable object
 }
 
 -- Highlight groups
@@ -50,6 +54,11 @@ local highlights = {
 	button_hover = "MluaDebuggerButtonHover",
 }
 
+-- Forward declarations
+local render_variables
+local render_stack_trace
+local render_console
+
 ---Setup highlight groups
 local function setup_highlights()
 	-- Stopped line - background highlight
@@ -58,9 +67,9 @@ local function setup_highlights()
 	api.nvim_set_hl(0, highlights.stack_frame, { fg = "#8888ff", default = true })
 	api.nvim_set_hl(0, highlights.stack_current, { fg = "#ffff00", bold = true, default = true })
 	-- Variables
-	api.nvim_set_hl(0, highlights.variable_name, { fg = "#ff88ff", default = true })
-	api.nvim_set_hl(0, highlights.variable_type, { fg = "#888888", italic = true, default = true })
-	api.nvim_set_hl(0, highlights.variable_value, { fg = "#88ff88", default = true })
+	api.nvim_set_hl(0, highlights.variable_name, { fg = "#9cdcfe", default = true })
+	api.nvim_set_hl(0, highlights.variable_type, { fg = "#4ec9b0", italic = true, default = true })
+	api.nvim_set_hl(0, highlights.variable_value, { fg = "#ce9178", default = true })
 	-- Console
 	api.nvim_set_hl(0, highlights.console_info, { fg = "#aaaaaa", default = true })
 	api.nvim_set_hl(0, highlights.console_error, { fg = "#ff8888", default = true })
@@ -74,22 +83,69 @@ local function setup_highlights()
 	state.stopped_line.ns_id = api.nvim_create_namespace("mlua_debugger_stopped")
 end
 
----Setup debug function key mappings for a buffer
+---Toggle variable expansion
+---@param buf number
+local function toggle_variable_expand(buf)
+	local cursor = api.nvim_win_get_cursor(0)
+	local row = cursor[1]
+	local var = state.variables_map[row]
+
+	if var and var.variablesReference > 0 then
+		local is_expanded = state.expanded_references[var.variablesReference]
+
+		if is_expanded then
+			-- Collapse
+			state.expanded_references[var.variablesReference] = false
+			render_variables()
+		else
+			-- Expand
+			state.expanded_references[var.variablesReference] = true
+			
+			-- Check if we already have children
+			if var.children then
+				render_variables()
+			else
+				-- Fetch children
+				adapter.getVariables(var.variablesReference, function(result)
+					if result and result.variables then
+						var.children = result.variables
+						vim.schedule(function()
+							render_variables()
+						end)
+					end
+				end)
+			end
+		end
+	end
+end
+
+---Setup keymaps for variables panel
+---@param buf number
+local function setup_variables_keymaps(buf)
+	local opts = { buffer = buf, silent = true, nowait = true }
+	
+	-- Toggle expansion on click or Enter
+	vim.keymap.set("n", "<CR>", function() toggle_variable_expand(buf) end, opts)
+	vim.keymap.set("n", "<2-LeftMouse>", function() toggle_variable_expand(buf) end, opts)
+	vim.keymap.set("n", "o", function() toggle_variable_expand(buf) end, opts)
+	
+	-- Standard debug keys
+	vim.keymap.set("n", "<F5>", function() adapter.continue() end, opts)
+	vim.keymap.set("n", "<F10>", function() adapter.next() end, opts)
+	vim.keymap.set("n", "<F11>", function() adapter.stepIn() end, opts)
+	vim.keymap.set("n", "<S-F11>", function() adapter.stepOut() end, opts)
+end
+
+---Setup debug keymaps for other panels
 ---@param buf number
 local function setup_debug_keymaps(buf)
 	local opts = { buffer = buf, silent = true, nowait = true }
-	vim.keymap.set("n", "<F5>", function()
-		adapter.continue()
-	end, vim.tbl_extend("force", opts, { desc = "Continue" }))
-	vim.keymap.set("n", "<F10>", function()
-		adapter.next()
-	end, vim.tbl_extend("force", opts, { desc = "Step Over" }))
-	vim.keymap.set("n", "<F11>", function()
-		adapter.stepIn()
-	end, vim.tbl_extend("force", opts, { desc = "Step Into" }))
-	vim.keymap.set("n", "<S-F11>", function()
-		adapter.stepOut()
-	end, vim.tbl_extend("force", opts, { desc = "Step Out" }))
+	
+	-- Standard debug keys
+	vim.keymap.set("n", "<F5>", function() adapter.continue() end, opts)
+	vim.keymap.set("n", "<F10>", function() adapter.next() end, opts)
+	vim.keymap.set("n", "<F11>", function() adapter.stepIn() end, opts)
+	vim.keymap.set("n", "<S-F11>", function() adapter.stepOut() end, opts)
 end
 
 ---Create a buffer for a panel
@@ -103,8 +159,15 @@ local function create_panel_buffer(name)
 	api.nvim_buf_set_option(buf, "swapfile", false)
 	api.nvim_buf_set_option(buf, "modifiable", false)
 	api.nvim_buf_set_option(buf, "filetype", "mlua-debugger-" .. name)
-	-- Setup debug keymaps for all panel buffers
-	setup_debug_keymaps(buf)
+	
+	-- Setup specific keymaps
+	if name == "variables" then
+		setup_variables_keymaps(buf)
+	else
+		-- Setup debug keymaps for other panel buffers
+		setup_debug_keymaps(buf)
+	end
+	
 	return buf
 end
 
@@ -162,14 +225,18 @@ local function close_panel_window(panel_name)
 end
 
 ---Render stack trace panel
-local function render_stack_trace()
+render_stack_trace = function()
 	local panel = state.panels.stack
 	if not panel.buf or not api.nvim_buf_is_valid(panel.buf) then
 		return
 	end
 
 	local trace = adapter.getStackTrace()
-	local lines = { "╭─ Stack Trace ─╮", "" }
+	local title = "╭─ Stack Trace ─╮"
+	if trace.execSpace and trace.execSpace ~= "" then
+		title = string.format("╭─ Stack Trace (%s) ─╮", trace.execSpace)
+	end
+	local lines = { title, "" }
 
 	if trace.totalFrames == 0 then
 		table.insert(lines, "  (no stack trace)")
@@ -201,16 +268,59 @@ local function render_stack_trace()
 	end
 end
 
+---Render a single variable recursively
+---@param lines string[]
+---@param var table
+---@param depth number
+local function render_variable_recursive(lines, var, depth)
+	local indent = string.rep("  ", depth)
+	local icon = "  "
+	
+	if var.variablesReference > 0 then
+		if state.expanded_references[var.variablesReference] then
+			icon = "▼ "
+		else
+			icon = "▶ "
+		end
+	end
+	
+	local type_str = var.type and string.format(" : %s", var.type) or ""
+	local value = var.value or "nil"
+	
+	-- Better formatting for tables/objects
+	if var.variablesReference > 0 and value:match("^table: 0x") then
+		-- If it's a table and we have children, maybe show count or just "..."
+		-- For now, keep the value but maybe clean it up if needed
+	end
+	
+	if #value > 50 then
+		value = value:sub(1, 47) .. "..."
+	end
+	
+	local text = string.format("%s%s%s%s = %s", indent, icon, var.name, type_str, value)
+	table.insert(lines, text)
+	state.variables_map[#lines] = var
+	
+	-- Render children if expanded
+	if var.variablesReference > 0 and state.expanded_references[var.variablesReference] and var.children then
+		for _, child in ipairs(var.children) do
+			render_variable_recursive(lines, child, depth + 1)
+		end
+	end
+end
+
 ---Render variables panel
----@param scopes table|nil
-local function render_variables(scopes)
+render_variables = function()
 	local panel = state.panels.variables
 	if not panel.buf or not api.nvim_buf_is_valid(panel.buf) then
 		return
 	end
 
+	-- Reset map
+	state.variables_map = {}
 	local lines = { "╭─ Variables ─╮", "" }
 
+	local scopes = state.scopes
 	if not scopes or #scopes == 0 then
 		table.insert(lines, "  (no variables)")
 	else
@@ -218,12 +328,7 @@ local function render_variables(scopes)
 			table.insert(lines, "┌ " .. scope.name)
 			if scope.variables then
 				for _, var in ipairs(scope.variables) do
-					local type_str = var.type and string.format(" (%s)", var.type) or ""
-					local value = var.value or "nil"
-					if #value > 30 then
-						value = value:sub(1, 27) .. "..."
-					end
-					table.insert(lines, string.format("  %s%s = %s", var.name, type_str, value))
+					render_variable_recursive(lines, var, 1)
 				end
 			end
 			table.insert(lines, "")
@@ -237,6 +342,32 @@ local function render_variables(scopes)
 	-- Apply highlights
 	api.nvim_buf_clear_namespace(panel.buf, state.stopped_line.ns_id, 0, -1)
 	api.nvim_buf_add_highlight(panel.buf, state.stopped_line.ns_id, highlights.panel_title, 0, 0, -1)
+	
+	-- Highlight variables
+	for i, line in ipairs(lines) do
+		if state.variables_map[i] then
+			-- Find positions for highlighting
+			local name_start = line:find("[^%s▶▼]")
+			if name_start then
+				name_start = name_start - 1
+				local eq_pos = line:find(" = ", name_start)
+				if eq_pos then
+					-- Name
+					local type_pos = line:find(" : ", name_start)
+					local name_end = type_pos or eq_pos
+					api.nvim_buf_add_highlight(panel.buf, state.stopped_line.ns_id, highlights.variable_name, i - 1, name_start, name_end - 1)
+					
+					-- Type
+					if type_pos then
+						api.nvim_buf_add_highlight(panel.buf, state.stopped_line.ns_id, highlights.variable_type, i - 1, type_pos + 3, eq_pos - 1)
+					end
+					
+					-- Value
+					api.nvim_buf_add_highlight(panel.buf, state.stopped_line.ns_id, highlights.variable_value, i - 1, eq_pos + 3, -1)
+				end
+			end
+		end
+	end
 end
 
 ---Setup keymaps for console panel buttons
@@ -294,7 +425,7 @@ local function setup_console_keymaps(buf)
 end
 
 ---Render console panel with clickable buttons
-local function render_console()
+render_console = function()
 	local panel = state.panels.console
 	if not panel.buf or not api.nvim_buf_is_valid(panel.buf) then
 		return
@@ -328,6 +459,24 @@ local function render_console()
 	setup_console_keymaps(panel.buf)
 end
 
+---Normalize file path (handle Windows paths in WSL)
+---@param path string
+---@return string
+local function normalize_path(path)
+	-- Convert backslashes to forward slashes
+	path = path:gsub("\\", "/")
+
+	-- Handle Windows drive letters for WSL
+	-- C:/Users/... -> /mnt/c/Users/...
+	local drive = path:match("^(%a):")
+	if drive then
+		local drive_lower = drive:lower()
+		path = path:gsub("^%a:", "/mnt/" .. drive_lower)
+	end
+
+	return path
+end
+
 ---Highlight stopped line in source buffer
 ---@param filePath string
 ---@param line number
@@ -335,8 +484,32 @@ local function highlight_stopped_line(filePath, line)
 	-- Clear previous highlight
 	M.clear_stopped_line()
 
+	-- Normalize path
+	filePath = normalize_path(filePath)
+
 	-- Find or open the file buffer
 	local bufnr = vim.fn.bufnr(filePath)
+
+	-- If not found, try to find by matching real paths or normalized paths
+	if bufnr == -1 then
+		local uv = vim.uv or vim.loop
+		local target_real = uv.fs_realpath(filePath)
+
+		for _, b in ipairs(api.nvim_list_bufs()) do
+			local b_name = api.nvim_buf_get_name(b)
+			if b_name ~= "" then
+				if normalize_path(b_name) == filePath then
+					bufnr = b
+					break
+				end
+				if target_real and uv.fs_realpath(b_name) == target_real then
+					bufnr = b
+					break
+				end
+			end
+		end
+	end
+
 	if bufnr == -1 then
 		-- Try to load the file
 		bufnr = vim.fn.bufadd(filePath)
@@ -345,6 +518,14 @@ local function highlight_stopped_line(filePath, line)
 
 	if not api.nvim_buf_is_valid(bufnr) then
 		return
+	end
+
+	-- Ensure line is within buffer bounds
+	local line_count = api.nvim_buf_line_count(bufnr)
+	if line > line_count then
+		line = line_count
+	elseif line < 1 then
+		line = 1
 	end
 
 	-- Jump to the file and line
@@ -476,7 +657,7 @@ function M.open()
 
 	-- Initial render
 	render_stack_trace()
-	render_variables(nil)
+	render_variables()
 	render_console()
 end
 
@@ -534,24 +715,32 @@ function M.on_event(event, body)
 				if result and result.scopes then
 					local scopes_with_vars = {}
 					local pending = #result.scopes
+					
+					-- Initialize scopes list
+					for i, scope in ipairs(result.scopes) do
+						scopes_with_vars[i] = {
+							name = scope.name,
+							variablesReference = scope.variablesReference,
+							variables = {}
+						}
+					end
+					
 					if pending == 0 then
+						state.scopes = scopes_with_vars
 						vim.schedule(function()
-							render_variables({})
+							render_variables()
 						end)
 						return
 					end
 
-					for _, scope in ipairs(result.scopes) do
+					for i, scope in ipairs(result.scopes) do
 						adapter.getVariables(scope.variablesReference, function(vars_result)
-							table.insert(scopes_with_vars, {
-								name = scope.name,
-								variablesReference = scope.variablesReference,
-								variables = vars_result and vars_result.variables or {},
-							})
+							scopes_with_vars[i].variables = vars_result and vars_result.variables or {}
 							pending = pending - 1
 							if pending == 0 then
+								state.scopes = scopes_with_vars
 								vim.schedule(function()
-									render_variables(scopes_with_vars)
+									render_variables()
 								end)
 							end
 						end)
@@ -565,7 +754,9 @@ function M.on_event(event, body)
 		vim.schedule(function()
 			M.clear_stopped_line()
 			render_stack_trace()
-			render_variables(nil)
+			state.scopes = nil
+			state.expanded_references = {}
+			render_variables()
 			M.log("info", "Debug session terminated")
 		end)
 	end
@@ -624,6 +815,24 @@ function M.setup(opts)
 	api.nvim_create_user_command("MluaDebugUIClear", function()
 		M.clear_console()
 	end, { desc = "Clear debug console" })
+
+	api.nvim_create_user_command("MluaDebugEvaluate", function(opts)
+		local expr = opts.args
+		if expr == "" then
+			vim.notify("Usage: MluaDebugEvaluate <expression>", vim.log.levels.ERROR)
+			return
+		end
+		
+		adapter.evaluate(expr, nil, nil, function(result)
+			vim.schedule(function()
+				if result.result then
+					M.log("info", string.format("Eval: %s = %s", expr, result.result))
+				else
+					M.log("error", string.format("Eval failed: %s", expr))
+				end
+			end)
+		end)
+	end, { nargs = "+", desc = "Evaluate expression in debug session" })
 end
 
 return M
