@@ -26,6 +26,8 @@ local M = {}
 ---@field timeout number Connection timeout in ms (default: 300000)
 ---@field ui MluaDebuggerUIConfig|nil UI configuration
 ---@field keymaps MluaDebuggerKeymaps|false|nil Keymap configuration (false to disable all)
+---@field deprecated_commands boolean Enable deprecated command aliases (default: true)
+---@field auto_ui boolean Automatically open/close UI on attach/disconnect (default: true)
 local default_config = {
 	port = 51300,
 	host = "localhost",
@@ -52,6 +54,8 @@ local default_config = {
 		disconnect = "<leader>dd",
 		toggle_ui = "<leader>du",
 	},
+	deprecated_commands = true,
+	auto_ui = true,
 }
 
 ---@type MluaDebuggerConfig
@@ -71,74 +75,185 @@ function M.setup(opts)
 	-- Pass timeout to adapter
 	adapter.timeout = M.config.timeout
 
-	-- Setup UI
-	ui.setup(M.config.ui)
+	-- Setup UI (pass deprecated_commands flag)
+	ui.setup(M.config.ui, M.config.deprecated_commands)
 
 	-- Set up sign column for breakpoints
 	vim.fn.sign_define("MluaBreakpoint", { text = "●", texthl = "DiagnosticError", linehl = "", numhl = "" })
 	vim.fn.sign_define("MluaBreakpointDisabled", { text = "○", texthl = "DiagnosticHint", linehl = "", numhl = "" })
 
-	-- Create user commands
-	vim.api.nvim_create_user_command("MluaDebugAttach", function(args)
-		local port = M.config.port
-		if args.args and #args.args > 0 then
-			port = tonumber(args.args) or port
-		end
-		M.attach(M.config.host, port)
-	end, { nargs = "?", desc = "Attach mLua debugger to MSW" })
+	-- Subcommand handlers for :Mlua debug <command>
+	local subcommands = {
+		attach = {
+			fn = function(args)
+				local port = M.config.port
+				if args[1] then
+					port = tonumber(args[1]) or port
+				end
+				M.attach(M.config.host, port)
+			end,
+			desc = "Attach to MSW debugger [port]",
+		},
+		disconnect = {
+			fn = function() M.disconnect() end,
+			desc = "Disconnect from debugger",
+		},
+		continue = {
+			fn = function() adapter.continue() end,
+			desc = "Continue execution",
+		},
+		stepover = {
+			fn = function() adapter.next() end,
+			desc = "Step over",
+		},
+		stepinto = {
+			fn = function() adapter.stepIn() end,
+			desc = "Step into",
+		},
+		stepout = {
+			fn = function() adapter.stepOut() end,
+			desc = "Step out",
+		},
+		breakpoint = {
+			fn = function() M.toggleBreakpoint() end,
+			desc = "Toggle breakpoint at cursor",
+		},
+		clearbreakpoints = {
+			fn = function() M.clearBreakpoints() end,
+			desc = "Clear all breakpoints",
+		},
+		stack = {
+			fn = function()
+				local trace = adapter.getStackTrace()
+				if trace.totalFrames == 0 then
+					vim.notify("No stack trace available", vim.log.levels.INFO)
+					return
+				end
+				local lines = { "Stack Trace:" }
+				for i, frame in ipairs(trace.stackFrames) do
+					table.insert(lines, string.format("  %d: %s at %s:%d", i, frame.name, frame.source.name, frame.line))
+				end
+				vim.notify(table.concat(lines, "\n"), vim.log.levels.INFO)
+			end,
+			desc = "Show stack trace",
+		},
+		eval = {
+			fn = function(args)
+				local expr = table.concat(args, " ")
+				if expr == "" then
+					vim.notify("Usage: :Mlua debug eval <expression>", vim.log.levels.WARN)
+					return
+				end
+				adapter.evaluate(expr, nil, "repl", function(result)
+					vim.notify(string.format("%s = %s (%s)", expr, result.result, result.type or "unknown"))
+				end)
+			end,
+			desc = "Evaluate expression",
+		},
+		uiopen = {
+			fn = function() ui.open() end,
+			desc = "Open debug UI",
+		},
+		uiclose = {
+			fn = function() ui.close() end,
+			desc = "Close debug UI",
+		},
+		uitoggle = {
+			fn = function() ui.toggle() end,
+			desc = "Toggle debug UI",
+		},
+		uiclear = {
+			fn = function() ui.clear_console() end,
+			desc = "Clear debug console",
+		},
+	}
 
-	vim.api.nvim_create_user_command("MluaDebugDisconnect", function()
-		M.disconnect()
-	end, { desc = "Disconnect mLua debugger" })
+	-- Main :MluaDebug command handler
+	vim.api.nvim_create_user_command("MluaDebug", function(opts)
+		local args = vim.split(opts.args, "%s+", { trimempty = true })
+		local subcmd = args[1]
 
-	vim.api.nvim_create_user_command("MluaDebugContinue", function()
-		adapter.continue()
-	end, { desc = "Continue execution" })
-
-	vim.api.nvim_create_user_command("MluaDebugStepOver", function()
-		adapter.next()
-	end, { desc = "Step over" })
-
-	vim.api.nvim_create_user_command("MluaDebugStepInto", function()
-		adapter.stepIn()
-	end, { desc = "Step into" })
-
-	vim.api.nvim_create_user_command("MluaDebugStepOut", function()
-		adapter.stepOut()
-	end, { desc = "Step out" })
-
-	vim.api.nvim_create_user_command("MluaDebugToggleBreakpoint", function()
-		M.toggleBreakpoint()
-	end, { desc = "Toggle breakpoint" })
-
-	vim.api.nvim_create_user_command("MluaDebugClearBreakpoints", function()
-		M.clearBreakpoints()
-	end, { desc = "Clear all breakpoints" })
-
-	-- Stack trace command
-	vim.api.nvim_create_user_command("MluaDebugStackTrace", function()
-		local trace = adapter.getStackTrace()
-		if trace.totalFrames == 0 then
-			vim.notify("No stack trace available", vim.log.levels.INFO)
+		if not subcmd or subcmd == "" then
+			-- Show help
+			vim.notify("Usage: :MluaDebug <subcommand>", vim.log.levels.INFO)
+			vim.notify("Available subcommands:", vim.log.levels.INFO)
+			for name, cmd in pairs(subcommands) do
+				vim.notify(string.format("  %s - %s", name, cmd.desc), vim.log.levels.INFO)
+			end
 			return
 		end
-		local lines = { "Stack Trace:" }
-		for i, frame in ipairs(trace.stackFrames) do
-			table.insert(lines, string.format("  %d: %s at %s:%d", i, frame.name, frame.source.name, frame.line))
-		end
-		vim.notify(table.concat(lines, "\n"), vim.log.levels.INFO)
-	end, { desc = "Show stack trace" })
 
-	-- Evaluate expression command
-	vim.api.nvim_create_user_command("MluaDebugEval", function(args)
-		if not args.args or #args.args == 0 then
-			vim.notify("Usage: MluaDebugEval <expression>", vim.log.levels.WARN)
-			return
+		local cmd = subcommands[subcmd]
+		if cmd then
+			-- Pass remaining args to the handler
+			local cmd_args = {}
+			for i = 2, #args do
+				table.insert(cmd_args, args[i])
+			end
+			cmd.fn(cmd_args)
+		else
+			vim.notify(string.format("Unknown subcommand: %s", subcmd), vim.log.levels.ERROR)
 		end
-		adapter.evaluate(args.args, nil, "repl", function(result)
-			vim.notify(string.format("%s = %s (%s)", args.args, result.result, result.type or "unknown"))
+	end, {
+		nargs = "?",
+		complete = function(arglead, cmdline, cursorpos)
+			local args = vim.split(cmdline, "%s+", { trimempty = true })
+			-- args[1] is "MluaDebug"
+			if #args == 1 or (#args == 2 and arglead ~= "") then
+				-- Complete subcommands
+				local names = vim.tbl_keys(subcommands)
+				table.sort(names)
+				if arglead == "" then
+					return names
+				end
+				return vim.tbl_filter(function(name)
+					return name:find("^" .. arglead) ~= nil
+				end, names)
+			end
+			return {}
+		end,
+		desc = "MluaDebug commands",
+	})
+
+	-- Deprecated command aliases (kept for backwards compatibility)
+	if M.config.deprecated_commands then
+		-- Helper to create deprecated command alias
+		local function create_deprecated_alias(old_name, new_subcmd, handler)
+			vim.api.nvim_create_user_command(old_name, function(args)
+				vim.notify(
+					string.format(":%s is deprecated and will be removed in a future version. Use :MluaDebug %s instead.", old_name, new_subcmd),
+					vim.log.levels.WARN
+				)
+				handler(args)
+			end, { nargs = "*", desc = string.format("[Deprecated] Use :MluaDebug %s instead", new_subcmd) })
+		end
+
+		create_deprecated_alias("MluaDebugAttach", "attach", function(args)
+			local port = M.config.port
+			if args.args and #args.args > 0 then
+				port = tonumber(args.args) or port
+			end
+			M.attach(M.config.host, port)
 		end)
-	end, { nargs = "+", desc = "Evaluate expression" })
+		create_deprecated_alias("MluaDebugDisconnect", "disconnect", function() M.disconnect() end)
+		create_deprecated_alias("MluaDebugContinue", "continue", function() adapter.continue() end)
+		create_deprecated_alias("MluaDebugStepOver", "stepover", function() adapter.next() end)
+		create_deprecated_alias("MluaDebugStepInto", "stepinto", function() adapter.stepIn() end)
+		create_deprecated_alias("MluaDebugStepOut", "stepout", function() adapter.stepOut() end)
+		create_deprecated_alias("MluaDebugToggleBreakpoint", "breakpoint", function() M.toggleBreakpoint() end)
+		create_deprecated_alias("MluaDebugClearBreakpoints", "clearbreakpoints", function() M.clearBreakpoints() end)
+		create_deprecated_alias("MluaDebugStackTrace", "stack", function()
+			subcommands.stack.fn()
+		end)
+		create_deprecated_alias("MluaDebugEval", "eval", function(args)
+			if args.args and #args.args > 0 then
+				local expr_args = vim.split(args.args, "%s+", { trimempty = true })
+				subcommands.eval.fn(expr_args)
+			else
+				vim.notify("Usage: MluaDebugEval <expression>", vim.log.levels.WARN)
+			end
+		end)
+	end
 
 	-- Set up buffer-local keymaps for mlua files (if not disabled)
 	if M.config.keymaps ~= false then
@@ -155,22 +270,22 @@ function M.setup(opts)
 					end
 				end
 
-				-- Debugging keymaps (only for mlua buffers)
-				set_keymap(km.continue, "<cmd>MluaDebugContinue<cr>", "Continue")
-				set_keymap(km.toggle_breakpoint, "<cmd>MluaDebugToggleBreakpoint<cr>", "Toggle breakpoint")
-				set_keymap(km.step_over, "<cmd>MluaDebugStepOver<cr>", "Step over")
-				set_keymap(km.step_into, "<cmd>MluaDebugStepInto<cr>", "Step into")
-				set_keymap(km.step_out, "<cmd>MluaDebugStepOut<cr>", "Step out")
-				set_keymap(km.continue_leader, "<cmd>MluaDebugContinue<cr>", "Debug: Continue")
-				set_keymap(km.toggle_breakpoint_leader, "<cmd>MluaDebugToggleBreakpoint<cr>", "Debug: Toggle breakpoint")
-				set_keymap(km.clear_breakpoints, "<cmd>MluaDebugClearBreakpoints<cr>", "Debug: Clear breakpoints")
-				set_keymap(km.step_over_leader, "<cmd>MluaDebugStepOver<cr>", "Debug: Step over")
-				set_keymap(km.step_into_leader, "<cmd>MluaDebugStepInto<cr>", "Debug: Step into")
-				set_keymap(km.step_out_leader, "<cmd>MluaDebugStepOut<cr>", "Debug: Step out")
-				set_keymap(km.stack_trace, "<cmd>MluaDebugStackTrace<cr>", "Debug: Stack trace")
-				set_keymap(km.attach, "<cmd>MluaDebugAttach<cr>", "Debug: Attach")
-				set_keymap(km.disconnect, "<cmd>MluaDebugDisconnect<cr>", "Debug: Disconnect")
-				set_keymap(km.toggle_ui, "<cmd>MluaDebugUIToggle<cr>", "Debug: Toggle UI")
+				-- Debugging keymaps (only for mlua buffers) - use new :MluaDebug commands
+				set_keymap(km.continue, "<cmd>MluaDebug continue<cr>", "Continue")
+				set_keymap(km.toggle_breakpoint, "<cmd>MluaDebug breakpoint<cr>", "Toggle breakpoint")
+				set_keymap(km.step_over, "<cmd>MluaDebug stepover<cr>", "Step over")
+				set_keymap(km.step_into, "<cmd>MluaDebug stepinto<cr>", "Step into")
+				set_keymap(km.step_out, "<cmd>MluaDebug stepout<cr>", "Step out")
+				set_keymap(km.continue_leader, "<cmd>MluaDebug continue<cr>", "Debug: Continue")
+				set_keymap(km.toggle_breakpoint_leader, "<cmd>MluaDebug breakpoint<cr>", "Debug: Toggle breakpoint")
+				set_keymap(km.clear_breakpoints, "<cmd>MluaDebug clearbreakpoints<cr>", "Debug: Clear breakpoints")
+				set_keymap(km.step_over_leader, "<cmd>MluaDebug stepover<cr>", "Debug: Step over")
+				set_keymap(km.step_into_leader, "<cmd>MluaDebug stepinto<cr>", "Debug: Step into")
+				set_keymap(km.step_out_leader, "<cmd>MluaDebug stepout<cr>", "Debug: Step out")
+				set_keymap(km.stack_trace, "<cmd>MluaDebug stack<cr>", "Debug: Stack trace")
+				set_keymap(km.attach, "<cmd>MluaDebug attach<cr>", "Debug: Attach")
+				set_keymap(km.disconnect, "<cmd>MluaDebug disconnect<cr>", "Debug: Disconnect")
+				set_keymap(km.toggle_ui, "<cmd>MluaDebug uitoggle<cr>", "Debug: Toggle UI")
 			end,
 		})
 	end
@@ -179,9 +294,13 @@ end
 ---Attach to debug server
 ---@param host string|nil
 ---@param port number|nil
-function M.attach(host, port)
+---@param open_ui boolean|nil Whether to open UI (default: uses config.auto_ui)
+function M.attach(host, port, open_ui)
 	host = host or M.config.host
 	port = port or M.config.port
+	if open_ui == nil then
+		open_ui = M.config.auto_ui
+	end
 
 	adapter.connect(host, port, function(err)
 		if err then
@@ -199,16 +318,28 @@ function M.attach(host, port)
 			adapter.setBreakpoints(filePath, lines)
 		end
 
-		-- Open UI
-		ui.open()
+		-- Close existing panels and open fresh UI if requested
+		if open_ui then
+			ui.close()
+			ui.open()
+		end
 		ui.log("info", string.format("Connected to %s:%d", host, port))
 	end)
 end
 
 ---Disconnect from debug server
-function M.disconnect()
+---@param close_ui boolean|nil Whether to close UI (default: uses config.auto_ui)
+function M.disconnect(close_ui)
+	if close_ui == nil then
+		close_ui = M.config.auto_ui
+	end
+
 	adapter.disconnect()
 	ui.log("info", "Disconnected")
+
+	if close_ui then
+		ui.close()
+	end
 end
 
 ---Toggle a breakpoint at the current cursor position
@@ -275,7 +406,7 @@ end
 M.connect = function(host, port, callback)
 	adapter.connect(host or M.config.host, port or M.config.port, callback)
 end
-M.disconnect = adapter.disconnect
+-- M.disconnect is already defined above with UI handling
 M.isConnected = adapter.isConnected
 M.continue = adapter.continue
 M.stepOver = adapter.next

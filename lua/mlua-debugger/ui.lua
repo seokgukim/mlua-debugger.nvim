@@ -346,24 +346,26 @@ render_variables = function()
 	-- Highlight variables
 	for i, line in ipairs(lines) do
 		if state.variables_map[i] then
-			-- Find positions for highlighting
-			local name_start = line:find("[^%s▶▼]")
-			if name_start then
-				name_start = name_start - 1
-				local eq_pos = line:find(" = ", name_start)
-				if eq_pos then
-					-- Name
-					local type_pos = line:find(" : ", name_start)
+			-- Find positions for highlighting (handle multi-byte UTF-8 characters)
+			-- Pattern: "  ▼ name : type = value" or "  ▶ name : type = value"
+			local eq_pos = line:find(" = ")
+			if eq_pos then
+				-- Find the start of the variable name (after icon)
+				-- Icons ▶ and ▼ are 3 bytes each, so skip indentation and icon
+				local name_start = line:find("[%w_]")
+				if name_start then
+					-- Name ends at " : " or " = "
+					local type_pos = line:find(" : ")
 					local name_end = type_pos or eq_pos
-					api.nvim_buf_add_highlight(panel.buf, state.stopped_line.ns_id, highlights.variable_name, i - 1, name_start, name_end - 1)
+					api.nvim_buf_add_highlight(panel.buf, state.stopped_line.ns_id, highlights.variable_name, i - 1, name_start - 1, name_end - 1)
 					
-					-- Type
-					if type_pos then
-						api.nvim_buf_add_highlight(panel.buf, state.stopped_line.ns_id, highlights.variable_type, i - 1, type_pos + 3, eq_pos - 1)
+					-- Type (between " : " and " = ")
+					if type_pos and type_pos < eq_pos then
+						api.nvim_buf_add_highlight(panel.buf, state.stopped_line.ns_id, highlights.variable_type, i - 1, type_pos + 2, eq_pos - 1)
 					end
 					
-					-- Value
-					api.nvim_buf_add_highlight(panel.buf, state.stopped_line.ns_id, highlights.variable_value, i - 1, eq_pos + 3, -1)
+					-- Value (after " = ")
+					api.nvim_buf_add_highlight(panel.buf, state.stopped_line.ns_id, highlights.variable_value, i - 1, eq_pos + 2, -1)
 				end
 			end
 		end
@@ -372,38 +374,30 @@ end
 
 ---Setup keymaps for console panel buttons
 ---@param buf number
+-- Global click handlers for winbar buttons (must be global for %@ to work)
+_G.MluaDebugContinue = function()
+	adapter.continue()
+end
+_G.MluaDebugStepOver = function()
+	adapter.next()
+end
+_G.MluaDebugStepInto = function()
+	adapter.stepIn()
+end
+_G.MluaDebugStepOut = function()
+	adapter.stepOut()
+end
+_G.MluaDebugStop = function()
+	adapter.disconnect()
+end
+_G.MluaDebugClearConsole = function()
+	M.clear_console()
+end
+
 local function setup_console_keymaps(buf)
 	local opts = { buffer = buf, silent = true, nowait = true }
 
-	-- Click handler for button line
-	vim.keymap.set("n", "<CR>", function()
-		local cursor = api.nvim_win_get_cursor(0)
-		local row, col = cursor[1], cursor[2]
-		if row == 1 then
-			-- Button line - determine which button was clicked
-			if col >= 1 and col <= 12 then
-				-- Continue
-				adapter.continue()
-			elseif col >= 14 and col <= 22 then
-				-- Step Over
-				adapter.next()
-			elseif col >= 24 and col <= 32 then
-				-- Step Into
-				adapter.stepIn()
-			elseif col >= 34 and col <= 41 then
-				-- Step Out
-				adapter.stepOut()
-			elseif col >= 43 and col <= 50 then
-				-- Stop/Disconnect
-				adapter.disconnect()
-			elseif col >= 52 and col <= 61 then
-				-- Clear console
-				M.clear_console()
-			end
-		end
-	end, opts)
-
-	-- Also support number keys for quick access
+	-- Number keys for quick access (works when focused on console buffer)
 	vim.keymap.set("n", "1", function()
 		adapter.continue()
 	end, vim.tbl_extend("force", opts, { desc = "Continue" }))
@@ -424,6 +418,28 @@ local function setup_console_keymaps(buf)
 	end, vim.tbl_extend("force", opts, { desc = "Clear" }))
 end
 
+-- Clickable winbar string for console panel
+local console_winbar = table.concat({
+	"%@v:lua.MluaDebugContinue@",
+	" [▶ Continue] ",
+	"%X",
+	"%@v:lua.MluaDebugStepOver@",
+	"[≫ Step] ",
+	"%X",
+	"%@v:lua.MluaDebugStepInto@",
+	"[↓ Into] ",
+	"%X",
+	"%@v:lua.MluaDebugStepOut@",
+	"[↑ Out] ",
+	"%X",
+	"%@v:lua.MluaDebugStop@",
+	"[■ Stop] ",
+	"%X",
+	"%@v:lua.MluaDebugClearConsole@",
+	"[∅ Clear]",
+	"%X",
+}, "")
+
 ---Render console panel with clickable buttons
 render_console = function()
 	local panel = state.panels.console
@@ -431,9 +447,8 @@ render_console = function()
 		return
 	end
 
-	-- Button bar at top
-	local button_line = " [▶ Continue] [≫ Step] [↓ Into] [↑ Out] [■ Stop] [∅ Clear] "
-	local lines = { button_line, "─── Console Output ───" }
+	-- Console output lines (buttons are in winbar now)
+	local lines = { "─── Console Output ───" }
 	for _, entry in ipairs(state.console_lines) do
 		table.insert(lines, entry.text)
 	end
@@ -446,32 +461,38 @@ render_console = function()
 
 	-- Apply highlights
 	api.nvim_buf_clear_namespace(panel.buf, state.stopped_line.ns_id, 0, -1)
-	-- Highlight button bar
-	api.nvim_buf_add_highlight(panel.buf, state.stopped_line.ns_id, highlights.button_normal, 0, 0, -1)
 	-- Highlight title
-	api.nvim_buf_add_highlight(panel.buf, state.stopped_line.ns_id, highlights.panel_title, 1, 0, -1)
+	api.nvim_buf_add_highlight(panel.buf, state.stopped_line.ns_id, highlights.panel_title, 0, 0, -1)
 	for i, entry in ipairs(state.console_lines) do
 		local hl = entry.level == "error" and highlights.console_error or highlights.console_info
-		api.nvim_buf_add_highlight(panel.buf, state.stopped_line.ns_id, hl, i + 1, 0, -1)
+		api.nvim_buf_add_highlight(panel.buf, state.stopped_line.ns_id, hl, i, 0, -1)
 	end
 
 	-- Setup clickable button keymaps
 	setup_console_keymaps(panel.buf)
 end
 
----Normalize file path (handle Windows paths in WSL)
+---Normalize file path (handle Windows paths)
 ---@param path string
 ---@return string
 local function normalize_path(path)
 	-- Convert backslashes to forward slashes
 	path = path:gsub("\\", "/")
 
-	-- Handle Windows drive letters for WSL
-	-- C:/Users/... -> /mnt/c/Users/...
-	local drive = path:match("^(%a):")
-	if drive then
-		local drive_lower = drive:lower()
-		path = path:gsub("^%a:", "/mnt/" .. drive_lower)
+	-- Check if we're running in WSL
+	local is_wsl = vim.fn.has("wsl") == 1 or (vim.fn.has("unix") == 1 and vim.fn.filereadable("/proc/version") == 1 and vim.fn.readfile("/proc/version")[1]:lower():find("microsoft") ~= nil)
+
+	if is_wsl then
+		-- Running in WSL: Convert Windows paths to WSL paths
+		-- C:/Users/... -> /mnt/c/Users/...
+		local drive = path:match("^(%a):")
+		if drive then
+			local drive_lower = drive:lower()
+			path = path:gsub("^%a:", "/mnt/" .. drive_lower)
+		end
+	else
+		-- Running natively on Windows or Linux: keep path as-is
+		-- Just ensure consistent slashes
 	end
 
 	return path
@@ -510,10 +531,48 @@ local function highlight_stopped_line(filePath, line)
 		end
 	end
 
-	if bufnr == -1 then
-		-- Try to load the file
-		bufnr = vim.fn.bufadd(filePath)
-		vim.fn.bufload(bufnr)
+	-- Jump to the file and line - find a suitable window first
+	local wins = api.nvim_list_wins()
+	local target_win = nil
+	for _, win in ipairs(wins) do
+		local win_buf = api.nvim_win_get_buf(win)
+		local buf_name = api.nvim_buf_get_name(win_buf)
+		-- Skip debugger panels
+		if not buf_name:match("^mlua%-debugger://") then
+			target_win = win
+			break
+		end
+	end
+
+	if not target_win then
+		-- No suitable window found, cannot jump
+		return
+	end
+
+	-- If buffer not found, we need to open the file
+	if bufnr == -1 or not api.nvim_buf_is_valid(bufnr) then
+		-- Check if file exists
+		local uv = vim.uv or vim.loop
+		local stat = uv.fs_stat(filePath)
+		if not stat then
+			vim.notify("Debug: File not found: " .. filePath, vim.log.levels.WARN)
+			return
+		end
+
+		-- Switch to target window and open the file using :edit
+		api.nvim_set_current_win(target_win)
+		local ok, err = pcall(vim.cmd, "edit " .. vim.fn.fnameescape(filePath))
+		if not ok then
+			vim.notify("Debug: Failed to open file: " .. tostring(err), vim.log.levels.ERROR)
+			return
+		end
+		bufnr = api.nvim_get_current_buf()
+	else
+		-- Buffer exists, just switch to it
+		api.nvim_set_current_win(target_win)
+		if api.nvim_win_get_buf(target_win) ~= bufnr then
+			api.nvim_win_set_buf(target_win, bufnr)
+		end
 	end
 
 	if not api.nvim_buf_is_valid(bufnr) then
@@ -528,26 +587,11 @@ local function highlight_stopped_line(filePath, line)
 		line = 1
 	end
 
-	-- Jump to the file and line
-	local wins = api.nvim_list_wins()
-	local target_win = nil
-	for _, win in ipairs(wins) do
-		local win_buf = api.nvim_win_get_buf(win)
-		local buf_name = api.nvim_buf_get_name(win_buf)
-		-- Skip debugger panels
-		if not buf_name:match("^mlua%-debugger://") then
-			target_win = win
-			break
-		end
-	end
+	-- Set cursor to the stopped line
+	pcall(api.nvim_win_set_cursor, target_win, { line, 0 })
 
-	if target_win then
-		api.nvim_set_current_win(target_win)
-		if api.nvim_win_get_buf(target_win) ~= bufnr then
-			api.nvim_win_set_buf(target_win, bufnr)
-		end
-		api.nvim_win_set_cursor(target_win, { line, 0 })
-	end
+	-- Center the view on the stopped line
+	vim.cmd("normal! zz")
 
 	-- Add highlight with virtual text background
 	state.stopped_line.bufnr = bufnr
@@ -651,6 +695,8 @@ function M.open()
 	api.nvim_win_set_option(state.panels.console.win, "winfixheight", true)
 	api.nvim_win_set_option(state.panels.console.win, "wrap", false)
 	api.nvim_win_set_option(state.panels.console.win, "cursorline", true)
+	-- Set clickable winbar for fixed button row at top
+	api.nvim_win_set_option(state.panels.console.win, "winbar", console_winbar)
 
 	-- Return to original window
 	api.nvim_set_current_win(cur_win)
@@ -795,44 +841,45 @@ end
 
 ---Setup the UI module
 ---@param opts MluaDebuggerUIConfig|nil
-function M.setup(opts)
+---@param deprecated_commands boolean|nil Whether to register deprecated commands
+function M.setup(opts, deprecated_commands)
 	M.config = vim.tbl_deep_extend("force", default_config, opts or {})
 	setup_highlights()
 
-	-- Create commands
-	api.nvim_create_user_command("MluaDebugUIOpen", function()
-		M.open()
-	end, { desc = "Open mLua debug UI" })
-
-	api.nvim_create_user_command("MluaDebugUIClose", function()
-		M.close()
-	end, { desc = "Close mLua debug UI" })
-
-	api.nvim_create_user_command("MluaDebugUIToggle", function()
-		M.toggle()
-	end, { desc = "Toggle mLua debug UI" })
-
-	api.nvim_create_user_command("MluaDebugUIClear", function()
-		M.clear_console()
-	end, { desc = "Clear debug console" })
-
-	api.nvim_create_user_command("MluaDebugEvaluate", function(opts)
-		local expr = opts.args
-		if expr == "" then
-			vim.notify("Usage: MluaDebugEvaluate <expression>", vim.log.levels.ERROR)
-			return
+	-- Deprecated UI command aliases (only if enabled)
+	if deprecated_commands ~= false then
+		local function create_deprecated_ui_alias(old_name, new_subcmd, handler)
+			api.nvim_create_user_command(old_name, function(cmd_opts)
+				vim.notify(
+					string.format(":%s is deprecated and will be removed in a future version. Use :MluaDebug %s instead.", old_name, new_subcmd),
+					vim.log.levels.WARN
+				)
+				handler(cmd_opts)
+			end, { nargs = "*", desc = string.format("[Deprecated] Use :MluaDebug %s instead", new_subcmd) })
 		end
-		
-		adapter.evaluate(expr, nil, nil, function(result)
-			vim.schedule(function()
-				if result.result then
-					M.log("info", string.format("Eval: %s = %s", expr, result.result))
-				else
-					M.log("error", string.format("Eval failed: %s", expr))
-				end
+
+		create_deprecated_ui_alias("MluaDebugUIOpen", "uiopen", function() M.open() end)
+		create_deprecated_ui_alias("MluaDebugUIClose", "uiclose", function() M.close() end)
+		create_deprecated_ui_alias("MluaDebugUIToggle", "uitoggle", function() M.toggle() end)
+		create_deprecated_ui_alias("MluaDebugUIClear", "uiclear", function() M.clear_console() end)
+		create_deprecated_ui_alias("MluaDebugEvaluate", "eval", function(cmd_opts)
+			local expr = cmd_opts.args
+			if expr == "" then
+				vim.notify("Usage: MluaDebugEvaluate <expression>", vim.log.levels.ERROR)
+				return
+			end
+			
+			adapter.evaluate(expr, nil, nil, function(result)
+				vim.schedule(function()
+					if result.result then
+						M.log("info", string.format("Eval: %s = %s", expr, result.result))
+					else
+						M.log("error", string.format("Eval failed: %s", expr))
+					end
+				end)
 			end)
 		end)
-	end, { nargs = "+", desc = "Evaluate expression in debug session" })
+	end
 end
 
 return M

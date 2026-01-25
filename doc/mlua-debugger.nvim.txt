@@ -37,35 +37,71 @@ Call the setup function with optional configuration:
 ==============================================================================
 4. COMMANDS                                       *mlua-debugger-commands*
 
+The plugin provides a unified :MluaDebug <subcommand> pattern.
+
+:MluaDebug {subcommand}                                        *:MluaDebug*
+    Main command with the following subcommands:
+
+    attach [port]     Attach to MSW debugger
+    disconnect        Disconnect from debugger
+    continue          Continue execution
+    stepover          Step over current line
+    stepinto          Step into function call
+    stepout           Step out of current function
+    breakpoint        Toggle breakpoint at cursor
+    clearbreakpoints  Clear all breakpoints
+    stack             Show current stack trace
+    eval {expr}       Evaluate an expression
+    uiopen            Open debug UI panels
+    uiclose           Close debug UI panels
+    uitoggle          Toggle debug UI panels
+    uiclear           Clear console output
+
+Legacy Commands (Deprecated) ~
+
+These commands still work but show a deprecation warning:
+
 :MluaDebugAttach [port]                              *:MluaDebugAttach*
-    Attach to the MSW debugger. Optional port argument.
+    [Deprecated] Use `:MluaDebug attach` instead.
 
 :MluaDebugDisconnect                                 *:MluaDebugDisconnect*
-    Disconnect from the debugger.
+    [Deprecated] Use `:MluaDebug disconnect` instead.
 
 :MluaDebugContinue                                   *:MluaDebugContinue*
-    Continue execution.
+    [Deprecated] Use `:MluaDebug continue` instead.
 
 :MluaDebugStepOver                                   *:MluaDebugStepOver*
-    Step over current line.
+    [Deprecated] Use `:MluaDebug stepover` instead.
 
 :MluaDebugStepInto                                   *:MluaDebugStepInto*
-    Step into function call.
+    [Deprecated] Use `:MluaDebug stepinto` instead.
 
 :MluaDebugStepOut                                    *:MluaDebugStepOut*
-    Step out of current function.
+    [Deprecated] Use `:MluaDebug stepout` instead.
 
 :MluaDebugToggleBreakpoint                     *:MluaDebugToggleBreakpoint*
-    Toggle breakpoint at cursor position.
+    [Deprecated] Use `:MluaDebug breakpoint` instead.
 
 :MluaDebugClearBreakpoints                     *:MluaDebugClearBreakpoints*
-    Clear all breakpoints.
+    [Deprecated] Use `:MluaDebug clearbreakpoints` instead.
 
 :MluaDebugStackTrace                                 *:MluaDebugStackTrace*
-    Show current stack trace.
+    [Deprecated] Use `:MluaDebug stack` instead.
 
 :MluaDebugEval {expression}                          *:MluaDebugEval*
-    Evaluate an expression.
+    [Deprecated] Use `:MluaDebug eval` instead.
+
+:MluaDebugUIOpen                                     *:MluaDebugUIOpen*
+    [Deprecated] Use `:MluaDebug uiopen` instead.
+
+:MluaDebugUIClose                                    *:MluaDebugUIClose*
+    [Deprecated] Use `:MluaDebug uiclose` instead.
+
+:MluaDebugUIToggle                                   *:MluaDebugUIToggle*
+    [Deprecated] Use `:MluaDebug uitoggle` instead.
+
+:MluaDebugUIClear                                    *:MluaDebugUIClear*
+    [Deprecated] Use `:MluaDebug uiclear` instead.
 
 ==============================================================================
 5. KEYMAPS                                         *mlua-debugger-keymaps*
