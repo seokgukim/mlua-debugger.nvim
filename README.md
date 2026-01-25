@@ -39,6 +39,7 @@ require("mlua-debugger").setup({
   port = 51300,       -- Default port to connect to
   host = "localhost", -- Host to connect to
   timeout = 300000,    -- Connection timeout in ms
+  auto_ui = true,     -- Automatically open/close UI on attach/disconnect
   ui = {
     width = 40,       -- Width of side panels
     height = 10,      -- Height of console panel
@@ -61,6 +62,7 @@ require("mlua-debugger").setup({
     disconnect = "<leader>dd",
     toggle_ui = "<leader>du",
   },
+  deprecated_commands = true, -- Set to false to hide deprecated command aliases from completion
 })
 ```
 
@@ -88,29 +90,47 @@ require("mlua-debugger").setup({
 
 ## Commands
 
-### Debug Commands
+The plugin provides a unified `:MluaDebug <subcommand>` pattern:
+
+### New Command Style
 
 | Command | Description |
 |---------|-------------|
-| `:MluaDebugAttach [port]` | Attach to MSW debugger |
-| `:MluaDebugDisconnect` | Disconnect from debugger |
-| `:MluaDebugContinue` | Continue execution |
-| `:MluaDebugStepOver` | Step over |
-| `:MluaDebugStepInto` | Step into |
-| `:MluaDebugStepOut` | Step out |
-| `:MluaDebugToggleBreakpoint` | Toggle breakpoint at cursor |
-| `:MluaDebugClearBreakpoints` | Clear all breakpoints |
-| `:MluaDebugStackTrace` | Show stack trace |
-| `:MluaDebugEval <expr>` | Evaluate expression |
+| `:MluaDebug attach [port]` | Attach to MSW debugger |
+| `:MluaDebug disconnect` | Disconnect from debugger |
+| `:MluaDebug continue` | Continue execution |
+| `:MluaDebug stepover` | Step over |
+| `:MluaDebug stepinto` | Step into |
+| `:MluaDebug stepout` | Step out |
+| `:MluaDebug breakpoint` | Toggle breakpoint at cursor |
+| `:MluaDebug clearbreakpoints` | Clear all breakpoints |
+| `:MluaDebug stack` | Show stack trace |
+| `:MluaDebug eval <expr>` | Evaluate expression |
+| `:MluaDebug uiopen` | Open debug UI panels |
+| `:MluaDebug uiclose` | Close debug UI panels |
+| `:MluaDebug uitoggle` | Toggle debug UI panels |
+| `:MluaDebug uiclear` | Clear console output |
 
-### UI Commands
+### Legacy Commands (Deprecated)
 
-| Command | Description |
-|---------|-------------|
-| `:MluaDebugUIOpen` | Open debug UI panels |
-| `:MluaDebugUIClose` | Close debug UI panels |
-| `:MluaDebugUIToggle` | Toggle debug UI panels |
-| `:MluaDebugUIClear` | Clear console output |
+The old command style is still supported but deprecated. A warning will be shown when using them:
+
+| Old Command | New Command |
+|-------------|-------------|
+| `:MluaDebugAttach [port]` | `:MluaDebug attach [port]` |
+| `:MluaDebugDisconnect` | `:MluaDebug disconnect` |
+| `:MluaDebugContinue` | `:MluaDebug continue` |
+| `:MluaDebugStepOver` | `:MluaDebug stepover` |
+| `:MluaDebugStepInto` | `:MluaDebug stepinto` |
+| `:MluaDebugStepOut` | `:MluaDebug stepout` |
+| `:MluaDebugToggleBreakpoint` | `:MluaDebug breakpoint` |
+| `:MluaDebugClearBreakpoints` | `:MluaDebug clearbreakpoints` |
+| `:MluaDebugStackTrace` | `:MluaDebug stack` |
+| `:MluaDebugEval <expr>` | `:MluaDebug eval <expr>` |
+| `:MluaDebugUIOpen` | `:MluaDebug uiopen` |
+| `:MluaDebugUIClose` | `:MluaDebug uiclose` |
+| `:MluaDebugUIToggle` | `:MluaDebug uitoggle` |
+| `:MluaDebugUIClear` | `:MluaDebug uiclear` |
 
 ## Keymaps (mlua filetype)
 
